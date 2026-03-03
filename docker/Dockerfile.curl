@@ -1,0 +1,95 @@
+# Global variables
+ARG APP_ROOT="/app" \
+    APP_NAME="curl" \
+    APP_VERSION="8.18.0"
+
+# Set Alpine as the base image for building Curl
+FROM alpine:latest AS curl-builder
+
+# Set arguments
+ARG APP_ROOT \
+    APP_NAME \
+    APP_VERSION \
+    APP_BUILD="/tmp/build-${APP_NAME}-${APP_VERSION}" \
+    APP_DOWNLOAD_URL="https://curl.se/download" \
+    APP_DOWNLOAD_NAME="${APP_NAME}-${APP_VERSION}.tar.gz" \
+    APP_DOWNLOAD="${APP_DOWNLOAD_URL}/${APP_DOWNLOAD_NAME}"
+
+# Set shell options
+SHELL ["/bin/ash", "-e", "-x", "-o", "pipefail", "-c"]
+
+# Set workdir
+WORKDIR "${APP_BUILD}"
+
+# Install build dependencies
+RUN set -x && \
+    apk update && \
+    apk add --no-cache --update --virtual .build-deps --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
+        build-base \
+        openssl-dev \
+        openssl-libs-static \
+        nghttp2-dev \
+        nghttp2-static \
+        zlib-dev \
+        zlib-static \
+        file \
+        gpg \
+        gpg-agent \
+        curl \
+        perl
+
+# Download curl
+RUN curl -sSLO "${APP_DOWNLOAD}" && \
+    # Download GPG signature
+    curl -sSLO "${APP_DOWNLOAD}.asc" && \
+    # Import GPG key for curl verification
+    gpg --keyserver keyserver.ubuntu.com --recv-keys 27EDEAF22F3ABCEB50DB9A125CC908FDB71E12C2 && \
+    # Automatically trust the imported keys
+    for fpr in $(gpg --list-keys --with-colons  | awk -F: '/fpr:/ {print $10}' | sort -u); do  echo -e "5\ny\n" |  gpg --command-fd 0 --expert --edit-key $fpr trust; done || true && \
+    # Verify the downloaded curl tarball with GPG
+    gpg --verify "${APP_DOWNLOAD_NAME}.asc" "${APP_DOWNLOAD_NAME}" && \
+    # Kill GPG agent
+    gpgconf --kill all && \
+    # Extract the tarball
+    tar -xzf "${APP_DOWNLOAD_NAME}"
+
+# Set workdir
+WORKDIR "${APP_BUILD}/${APP_NAME}-${APP_VERSION}"
+
+# Configure curl
+RUN LDFLAGS="-static" \
+    PKG_CONFIG="pkg-config --static" \
+    ./configure \
+      --disable-shared \
+      --enable-static \
+      --disable-ldap \
+      --disable-sspi \
+      --disable-gopher \
+      --disable-imap \
+      --disable-pop3 \
+      --disable-smtp \
+      --disable-telnet \
+      --disable-manual \
+      --disable-dict \
+      --disable-rtsp \
+      --with-ssl \
+      --with-zlib \
+      --with-nghttp2 \
+      --without-libpsl && \
+    # Build curl
+    make -j $(nproc) V=1 LDFLAGS="-static -all-static" && \
+    # Install curl
+    make install
+
+# Check if curl is static linked
+RUN file /usr/local/bin/curl | grep -i "static" || exit 1 && \
+    # Strip curl (smaller)
+    strip /usr/local/bin/curl
+
+# Distroless base image with curl
+FROM bleala/distroless:base AS curl
+
+# Copy Curl from build stage
+COPY --from=curl-builder /usr/local/bin/curl /usr/bin/curl
+
+ENTRYPOINT ["/usr/bin/curl"]

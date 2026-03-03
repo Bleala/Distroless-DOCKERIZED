@@ -1,0 +1,47 @@
+# Global variables
+ARG APP_UID="1000" \
+    APP_GID="1000" \
+    APP_USER="app" \
+    APP_ROOT="/app"
+
+# Prepare distroless image
+FROM alpine:latest AS distroless-builder
+
+# Set arguments
+ARG APP_UID \
+    APP_GID \
+    APP_USER \
+    APP_ROOT
+
+# Set shell options
+SHELL ["/bin/ash", "-e", "-x", "-o", "pipefail", "-c"]
+
+# Install Root certificates
+RUN apk add --no-cache --update --repository https://dl-cdn.alpinelinux.org/alpine/edge/main ca-certificates && \
+    mkdir --parents "${APP_ROOT}/usr/share/ca-certificates" "${APP_ROOT}/etc/ssl/certs" && \
+     cp -R /usr/share/ca-certificates/* "${APP_ROOT}/usr/share/ca-certificates" && \
+     cp -R /etc/ssl/certs/* "${APP_ROOT}/etc/ssl/certs"
+
+# Create default users
+RUN echo "root:x:0:0:root:/root:/sbin/nologin" > "${APP_ROOT}/etc/passwd" && \
+    echo "${APP_USER}:x:${APP_UID}:${APP_GID}:${APP_USER}:/:/sbin/nologin" >> "${APP_ROOT}/etc/passwd" && \
+    echo "root:x:0:root" > "${APP_ROOT}/etc/group" && \
+    echo "${APP_USER}:x:${APP_GID}:${APP_USER}" >> "${APP_ROOT}/etc/group"
+
+# Add timezone information
+RUN apk add --no-cache --update --repository https://dl-cdn.alpinelinux.org/alpine/edge/main tzdata && \
+    mkdir -p "${APP_ROOT}/usr/share/zoneinfo" && \
+    cp -R /usr/share/zoneinfo/* "${APP_ROOT}/usr/share/zoneinfo"
+
+# Create distroless image
+FROM scratch AS distroless
+
+# Set arguments
+ARG APP_USER \
+    APP_ROOT
+
+# Copy files
+COPY --from=distroless-builder "${APP_ROOT}/" /
+
+# Change user
+USER "${APP_USER}"
