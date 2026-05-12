@@ -1,35 +1,39 @@
 # Global variables
-ARG APP_UID="1000" \
-    APP_GID="1000" \
-    APP_USER="app" \
-    APP_ROOT="/app"
+ARG ALPINE_VERSION="3.23.4"
+ARG IMAGE_VERSION="1.0.0"
+ARG APP_UID="1001"
+ARG APP_GID="1001"
+ARG APP_USER="app"
+ARG APP_ROOT="/app"
 
 # Prepare distroless image
-FROM alpine:latest AS distroless-builder
+FROM alpine:${ALPINE_VERSION} AS distroless-builder
 
 # Set arguments
-ARG APP_UID \
-    APP_GID \
-    APP_USER \
-    APP_ROOT
+ARG APP_UID
+ARG APP_GID
+ARG APP_USER
+ARG APP_ROOT
 
 # Set shell options
 SHELL ["/bin/ash", "-e", "-x", "-o", "pipefail", "-c"]
 
-# Install Root certificates
-RUN apk add --no-cache --update --repository https://dl-cdn.alpinelinux.org/alpine/edge/main ca-certificates && \
-    mkdir --parents "${APP_ROOT}/usr/share/ca-certificates" "${APP_ROOT}/etc/ssl/certs" && \
-     cp -R /usr/share/ca-certificates/* "${APP_ROOT}/usr/share/ca-certificates" && \
-     cp -R /etc/ssl/certs/* "${APP_ROOT}/etc/ssl/certs"
+# Install packages
+RUN apk add --no-cache \
+      ca-certificates \
+      tzdata
 
-# Create default users
-RUN echo "root:x:0:0:root:/root:/sbin/nologin" > "${APP_ROOT}/etc/passwd" && \
+# Create application root directory
+    # Copy CA certificates
+RUN mkdir --parents "${APP_ROOT}/usr/share/ca-certificates" "${APP_ROOT}/etc/ssl/certs" && \
+    cp -R /usr/share/ca-certificates/* "${APP_ROOT}/usr/share/ca-certificates" && \
+    cp -R /etc/ssl/certs/* "${APP_ROOT}/etc/ssl/certs" && \
+    # Create users
+    echo "root:x:0:0:root:/root:/sbin/nologin" > "${APP_ROOT}/etc/passwd" && \
     echo "${APP_USER}:x:${APP_UID}:${APP_GID}:${APP_USER}:/:/sbin/nologin" >> "${APP_ROOT}/etc/passwd" && \
     echo "root:x:0:root" > "${APP_ROOT}/etc/group" && \
-    echo "${APP_USER}:x:${APP_GID}:${APP_USER}" >> "${APP_ROOT}/etc/group"
-
-# Add timezone information
-RUN apk add --no-cache --update --repository https://dl-cdn.alpinelinux.org/alpine/edge/main tzdata && \
+    echo "${APP_USER}:x:${APP_GID}:${APP_USER}" >> "${APP_ROOT}/etc/group" && \
+    # Add timezone information
     mkdir -p "${APP_ROOT}/usr/share/zoneinfo" && \
     cp -R /usr/share/zoneinfo/* "${APP_ROOT}/usr/share/zoneinfo"
 
@@ -37,11 +41,33 @@ RUN apk add --no-cache --update --repository https://dl-cdn.alpinelinux.org/alpi
 FROM scratch AS distroless
 
 # Set arguments
-ARG APP_USER \
-    APP_ROOT
+ARG APP_USER
+ARG APP_ROOT
+ARG IMAGE_VERSION
+
+# Set Timezone
+ENV TZ="Europe/Vienna"
 
 # Copy files
 COPY --from=distroless-builder "${APP_ROOT}/" /
+
+# Set build arguments here, because caching would break otherwise
+# It is set during the build process in the reusable workflow
+ARG BUILD_DATE
+ARG COMMIT_HASH
+
+# Set labels
+LABEL org.opencontainers.image.authors="Bleala" \
+      org.opencontainers.image.vendor="Bleala" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.title="Distroless-DOCKERIZED - Base" \
+      org.opencontainers.image.description="Distroless - a minimal Docker image. DOCKERIZED!" \
+      org.opencontainers.image.documentation="https://github.com/Bleala/Distroless-DOCKERIZED/blob/main/README.md" \
+      org.opencontainers.image.url="https://hub.docker.com/r/bleala/distroless" \
+      org.opencontainers.image.source="https://github.com/Bleala/Distroless-DOCKERIZED" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.revision="${COMMIT_HASH}"
 
 # Change user
 USER "${APP_USER}"
